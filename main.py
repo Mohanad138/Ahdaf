@@ -96,21 +96,9 @@ def _is_usable_media_msg(m):
     return False
 
 def _media_payload(m):
+    # هذا الجزء هو الذي يسمح بنسخ الفيديو مباشرة بدون تحميل وإخفاء اسم المرسل
     if isinstance(m.media, MessageMediaWebPage): return m.photo if m.photo else None
     return m.media
-
-def _message_has_any_video(m):
-    media = m.media
-    if isinstance(media, MessageMediaDocument): return bool(m.video) or bool(getattr(m, "gif", None))
-    if isinstance(media, MessageMediaWebPage):
-        wp = getattr(media, "webpage", None)
-        if not wp: return False
-        if getattr(wp, "duration", None): return True
-        wtype = str(getattr(wp, "type", "") or "").lower()
-        if "video" in wtype or "gif" in wtype: return True
-        doc = getattr(wp, "document", None)
-        if doc and str(getattr(doc, "mime_type", "")).startswith(("video/", "image/gif")): return True
-    return False
 
 def clean_text(text):
     if not text: return ""
@@ -132,31 +120,31 @@ async def process_batch(source_id, messages):
     cleaned = clean_text(raw_text)
 
     # منع التكرار
-    if is_duplicate_content(source_id, cleaned): return
+    if is_duplicate_content(source_id, cleaned): 
+        print("⏭️ تجاهل: منشور مكرر")
+        return
 
     record_published_text(source_id, cleaned)
     final_text = cleaned
 
+    # جلب الوسائط (سواء فيديو أو صورة)
     media_msgs = [m for m in messages if _is_usable_media_msg(m)]
-    force_here_we_go = False
-
-    if any(_message_has_any_video(m) for m in messages) and not force_here_we_go:
-        return # تجاهل الفيديوهات
+    if not media_msgs:
+        print("⏭️ تجاهل: منشور بدون فيديو أو صورة (قناة أهداف المباريات تعتمد على الميديا)")
+        return
 
     if config.get("add_link") and config.get("link"):
         final_text = f"{final_text}\n\n{config['link']}" if final_text else config["link"]
 
     try:
-        if media_msgs:
-            valid_payloads = [_media_payload(m) for m in media_msgs if _media_payload(m) is not None]
-            if valid_payloads:
-                to_send = valid_payloads[0] if len(valid_payloads) == 1 else valid_payloads
-                await client.send_file(config["target"], to_send, caption=final_text or None, parse_mode="html")
-                return
-        if final_text:
-            await client.send_message(config["target"], final_text, parse_mode="html", link_preview=False)
+        valid_payloads = [_media_payload(m) for m in media_msgs if _media_payload(m) is not None]
+        if valid_payloads:
+            # هنا السحر: يرسل الملف مباشرة بدون تحميل، وبالتالي يخفي اسم المرسل الأصلي
+            to_send = valid_payloads[0] if len(valid_payloads) == 1 else valid_payloads
+            await client.send_file(config["target"], to_send, caption=final_text or None, parse_mode="html")
+            print("✅ نُشر فيديو/صورة بنجاح مع الوصف")
     except Exception as e:
-        print(f"❌ خطأ: {e}")
+        print(f"❌ خطأ أثناء النشر: {e}")
 
 async def catch_up_channel(source_id):
     config = CHANNELS.get(source_id, {})
